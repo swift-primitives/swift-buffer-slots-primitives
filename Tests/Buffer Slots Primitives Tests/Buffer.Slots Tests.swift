@@ -1,10 +1,19 @@
-import Buffer_Slots_Primitives_Test_Support
+import Buffer_Primitive
 import Buffer_Slots_Primitives
+import Buffer_Slots_Primitives_Test_Support
+import Storage_Contiguous_Primitives
+import Store_Split_Primitives
 import Testing
 
-// Buffer.Slots is generic (Buffer<Element>.Slots<Metadata>), so per [TEST-004]
-// we use the parallel namespace pattern — @Suite in extensions of generic type
-// specializations is silently not discovered by Swift Testing.
+// Buffer.Slots is generic over its dual-plane split substrate `S` (b-pin:
+// `Buffer<Store.Split<Storage<…System>.Contiguous<Metadata>, Storage<…System>.Contiguous<Element>>>.Slots`).
+// Per [TEST-004] we use the parallel namespace pattern — @Suite in extensions of
+// generic type specializations is silently not discovered by Swift Testing.
+//
+// The canonical tower under test has element type `Int` and metadata type `UInt8`
+// (the Swiss-table control-byte shape). Aliased for readability; the dual-plane
+// operations recover the metadata type through the same-type pin on `S`.
+private typealias Slots = Buffer<Store.Split<Storage<Memory.Allocator<Memory.Heap>>.Contiguous<UInt8>, Storage<Memory.Allocator<Memory.Heap>>.Contiguous<Int>>>.Slots
 
 @Suite("Buffer.Slots")
 struct SlotsTests {
@@ -20,20 +29,20 @@ extension SlotsTests.Unit {
     @Test
     func `init creates buffer with requested capacity`() {
         let capacity: Index<Int>.Count = 8
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: capacity, metadataInitial: 0x80)
+        let buffer = Slots(capacity: capacity, metadataInitial: 0x80)
         #expect(buffer.capacity == capacity)
     }
 
     @Test
     func `metadata subscript reads initial value`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        let buffer = Slots(capacity: 4, metadataInitial: 0x80)
         let slot: Index<Int> = 0
         #expect(buffer[metadata: slot] == 0x80)
     }
 
     @Test
     func `metadata subscript writes and reads back`() {
-        var buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         let slot: Index<Int> = 2
         buffer[metadata: slot] = 0x42
         #expect(buffer[metadata: slot] == 0x42)
@@ -41,7 +50,7 @@ extension SlotsTests.Unit {
 
     @Test
     func `initialize and move round-trips element`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         let slot: Index<Int> = 1
         buffer.initialize(to: 99, at: slot)
         let value = buffer.move(at: slot)
@@ -50,7 +59,7 @@ extension SlotsTests.Unit {
 
     @Test
     func `initialize and deinitialize does not crash`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         let slot: Index<Int> = 0
         buffer.initialize(to: 42, at: slot)
         buffer.deinitialize(at: slot)
@@ -58,7 +67,7 @@ extension SlotsTests.Unit {
 
     @Test
     func `payload subscript reads initialized element`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         let slot: Index<Int> = 2
         buffer.initialize(to: 77, at: slot)
         #expect(buffer[payload: slot] == 77)
@@ -67,7 +76,7 @@ extension SlotsTests.Unit {
 
     @Test
     func `payload subscript overwrites element`() {
-        var buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         let slot: Index<Int> = 1
         buffer.initialize(to: 10, at: slot)
         buffer[payload: slot] = 20
@@ -77,7 +86,7 @@ extension SlotsTests.Unit {
 
     @Test
     func `fill metadata overwrites all slots`() {
-        var buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         buffer[metadata: 0] = 0x42
         buffer[metadata: 1] = 0x43
         buffer.fill(metadata: 0xFF)
@@ -89,7 +98,7 @@ extension SlotsTests.Unit {
 
     @Test
     func `fill payload writes all slots`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         buffer.fill(payload: 0)
         #expect(buffer[payload: 0] == 0)
         #expect(buffer[payload: 1] == 0)
@@ -101,7 +110,7 @@ extension SlotsTests.Unit {
 
     @Test
     func `deinitialize where cleans up occupied slots`() {
-        var buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         // Simulate Swiss-table: 0x80 = empty, anything else = occupied
         buffer.initialize(to: 10, at: 0)
         buffer[metadata: 0] = 0x01
@@ -113,7 +122,7 @@ extension SlotsTests.Unit {
 
     @Test
     func `withMetadataPointer provides contiguous access`() {
-        var buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         buffer[metadata: 1] = 0x42
         buffer[metadata: 3] = 0x43
 
@@ -128,7 +137,7 @@ extension SlotsTests.Unit {
 
     @Test
     func `withMutableMetadataPointer allows mutation`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
 
         unsafe buffer.withMutableMetadataPointer { ptr in
             unsafe ptr[0] = 0xAA
@@ -138,32 +147,9 @@ extension SlotsTests.Unit {
         #expect(buffer[metadata: 1] == 0xBB)
     }
 
-    @Test
-    func `pointer at returns valid element pointer`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
-        let slot: Index<Int> = 2
-        buffer.initialize(to: 55, at: slot)
-        let ptr = unsafe buffer.pointer(at: slot)
-        #expect(unsafe ptr.pointee == 55)
-        buffer.deinitialize(at: slot)
-    }
-
-    @Test
-    func `Copyable conditional conformance`() {
-        var a = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
-        a.initialize(to: 10, at: 0)
-        a[metadata: 0] = 0x01
-
-        // Copy — Buffer.Slots is Copyable when Element: Copyable
-        let b = a
-        #expect(b[metadata: 0] == 0x01)
-        #expect(b[payload: 0] == 10)
-
-        // Both references share the same storage (class-backed),
-        // so deinitialize only once
-        a.deinitialize(at: 0)
-    }
 }
+// The prior `pointer(at:)` returning escape hatch is WITHDRAWN (depointer arc) and Buffer.Slots
+// is MOVE-ONLY per R-1 — their tests are removed; CoW coverage re-materializes at the W4 ADTs.
 
 // MARK: - Edge Cases
 
@@ -171,7 +157,7 @@ extension SlotsTests.EdgeCase {
 
     @Test
     func `all metadata initially uniform`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 8, metadataInitial: 0x80)
+        let buffer = Slots(capacity: 8, metadataInitial: 0x80)
         for i: UInt in 0..<8 {
             let slot = Index<Int>(_unchecked: Ordinal(i))
             #expect(buffer[metadata: slot] == 0x80)
@@ -180,14 +166,14 @@ extension SlotsTests.EdgeCase {
 
     @Test
     func `deinitialize where with no occupied slots is safe`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         // No elements initialized — should be a no-op
         buffer.deinitialize(where: { $0 != 0x80 })
     }
 
     @Test
     func `deinitialize where with all occupied slots`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x00)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x00)
         // metadataInitial 0x00 means "occupied" in our predicate
         buffer.initialize(to: 1, at: 0)
         buffer.initialize(to: 2, at: 1)
@@ -198,7 +184,7 @@ extension SlotsTests.EdgeCase {
 
     @Test
     func `fill metadata then selective overwrite`() {
-        var buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         buffer.fill(metadata: 0xFF)
         buffer[metadata: 2] = 0x42
         #expect(buffer[metadata: 0] == 0xFF)
@@ -209,7 +195,7 @@ extension SlotsTests.EdgeCase {
 
     @Test
     func `move leaves slot uninitialized for reuse`() {
-        let buffer = Buffer<Int>.Slots<UInt8>(capacity: 4, metadataInitial: 0x80)
+        var buffer = Slots(capacity: 4, metadataInitial: 0x80)
         let slot: Index<Int> = 0
 
         buffer.initialize(to: 100, at: slot)
@@ -230,7 +216,7 @@ extension SlotsTests.Integration {
     @Test
     func `Swiss-table lifecycle — insert, probe, delete`() {
         let empty: UInt8 = 0x80
-        var buffer = Buffer<Int>.Slots<UInt8>(capacity: 8, metadataInitial: empty)
+        var buffer = Slots(capacity: 8, metadataInitial: empty)
 
         // Insert: slot 3 gets h2=0x42, payload=100
         let slot: Index<Int> = 3
@@ -251,7 +237,7 @@ extension SlotsTests.Integration {
     @Test
     func `multiple slots occupied simultaneously`() {
         let empty: UInt8 = 0x80
-        var buffer = Buffer<Int>.Slots<UInt8>(capacity: 8, metadataInitial: empty)
+        var buffer = Slots(capacity: 8, metadataInitial: empty)
 
         // Populate slots 0, 2, 5, 7
         let slots: [(Index<Int>, Int, UInt8)] = [
@@ -284,7 +270,7 @@ extension SlotsTests.Integration {
     @Test
     func `metadata scan via withMetadataPointer`() {
         let empty: UInt8 = 0x80
-        var buffer = Buffer<Int>.Slots<UInt8>(capacity: 8, metadataInitial: empty)
+        var buffer = Slots(capacity: 8, metadataInitial: empty)
         buffer[metadata: 1] = 0x42
         buffer[metadata: 4] = 0x42
         buffer[metadata: 6] = 0x42

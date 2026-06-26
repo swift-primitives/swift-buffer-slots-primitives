@@ -1,0 +1,8 @@
+# .github/metadata.yaml
+description: "The slots buffer discipline over the Buffer namespace — a fixed-capacity, metadata-parametric slots buffer backed by split storage, with consumer-managed element lifecycle; supports ~Copyable elements."
+topics:
+  - primitives
+  - buffer
+homepage: "https://swift-institute.org"
+readme:
+  family: E
